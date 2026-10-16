@@ -20,24 +20,15 @@ import { Context } from '@deepseek-ai/cordis'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
 import * as plugin from '../lib/index.js'
+import { embedderConfig, vectorStoreConfig, describeBackends, liveBackendsOrSkip } from './backends.mjs'
 
 const SCOPE_SIZE = 25
+
+console.log(`后端：${describeBackends()}`)
+if (!(await liveBackendsOrSkip('scope-delete'))) process.exit(0)
 const baseConfig = {
-  embedder: {
-    provider: 'ollama',
-    config: { url: 'http://localhost:11434', model: 'nomic-embed-text:latest' },
-  },
-  vectorStore: {
-    provider: 'elasticsearch',
-    config: {
-      collectionName: 'mem0_dsh_scope_delete',
-      host: 'localhost',
-      port: 9200,
-      username: 'elastic',
-      password: 'elastic',
-      useSsl: false,
-    },
-  },
+  embedder: embedderConfig(),
+  vectorStore: vectorStoreConfig('mem0_dsh_scope_delete'),
   preflight: { enabled: true, timeoutMs: 15000 },
   // Keep test history out of the user's DSH home.
   history: { dbPath: join(tmpdir(), 'dsh-mem0-test-history.db') },

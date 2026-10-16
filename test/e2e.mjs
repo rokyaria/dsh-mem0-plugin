@@ -23,26 +23,16 @@ import { Context } from '@deepseek-ai/cordis'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
 import * as plugin from '../lib/index.js'
+import { embedderConfig, vectorStoreConfig, describeBackends, liveBackendsOrSkip } from './backends.mjs'
 
 const COLLECTION = 'mem0_dsh_plugin_test'
 const USER = 'dsh_plugin_e2e_user'
 
+console.log(`后端：${describeBackends()}`)
+if (!(await liveBackendsOrSkip('e2e')) ) process.exit(0)
 const config = {
-  embedder: {
-    provider: 'ollama',
-    config: { url: 'http://localhost:11434', model: 'nomic-embed-text:latest' },
-  },
-  vectorStore: {
-    provider: 'elasticsearch',
-    config: {
-      collectionName: COLLECTION,
-      host: 'localhost',
-      port: 9200,
-      username: 'elastic',
-      password: 'elastic',
-      useSsl: false,
-    },
-  },
+  embedder: embedderConfig(),
+  vectorStore: vectorStoreConfig(COLLECTION),
   // No `llm` on purpose: proves the plugin loads without one and that mem0_add
   // falls back to infer:false instead of calling a non-existent LLM.
   preflight: { enabled: true, timeoutMs: 15000 },

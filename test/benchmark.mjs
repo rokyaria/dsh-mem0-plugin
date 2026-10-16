@@ -30,6 +30,14 @@ import { Context } from '@deepseek-ai/cordis'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
 import * as plugin from '../lib/index.js'
+import {
+  embedderConfig,
+  vectorStoreConfig,
+  describeBackends,
+  liveBackendsOrSkip,
+  EMBEDDER,
+  EMBEDDER_MODEL as MODEL,
+} from './backends.mjs'
 
 // ---------------------------------------------------------------- parameters
 const COUNT = Number(process.env.COUNT ?? 100)
@@ -38,27 +46,9 @@ const TOP_K = Number(process.env.TOP_K ?? 5)
 const WARMUP = Number(process.env.WARMUP ?? 5)
 const COLLECTION = process.env.BENCH_COLLECTION ?? 'mem0_dsh_benchmark'
 const USER = 'mem0_benchmark_user'
-const EMBEDDER = process.env.BENCH_EMBEDDER ?? 'ollama'
-const MODEL =
-  process.env.BENCH_MODEL ??
-  (EMBEDDER === 'lmstudio' ? 'text-embedding-bge-m3' : 'nomic-embed-text:latest')
-const EMBEDDER_URL =
-  process.env.BENCH_EMBEDDER_URL ??
-  (EMBEDDER === 'lmstudio' ? 'http://localhost:1234/v1' : 'http://localhost:11434')
-
 const baseConfig = {
-  embedder: { provider: EMBEDDER, config: { url: EMBEDDER_URL, baseURL: EMBEDDER_URL, model: MODEL } },
-  vectorStore: {
-    provider: 'elasticsearch',
-    config: {
-      collectionName: COLLECTION,
-      host: 'localhost',
-      port: 9200,
-      username: 'elastic',
-      password: 'elastic',
-      useSsl: false,
-    },
-  },
+  embedder: embedderConfig(),
+  vectorStore: vectorStoreConfig(COLLECTION),
   preflight: { enabled: true, timeoutMs: 20000 },
 }
 
@@ -248,7 +238,7 @@ const report = `# dsh-mem0-plugin 性能基线
 ${
   ratio > 3
     ? `p95 是 p50 的 ${ratio.toFixed(1)} 倍，说明**尾部**而非中位数决定了体验。\n` +
-      `尾部大概率来自 embedding 服务的调度（本地 Ollama），而不是 ES —— 全量扫描 ${withRefresh.scan.total} 条只要 ${withRefresh.scan.ms} ms，可见 ES 侧很轻。`
+      `尾部大概率来自 embedding 服务的调度（${EMBEDDER}），而不是 ES —— 全量扫描 ${withRefresh.scan.total} 条只要 ${withRefresh.scan.ms} ms，可见 ES 侧很轻。`
     : `本次运行 p95/p50 = ${ratio.toFixed(1)}，延迟分布相对集中。`
 }
 
@@ -329,6 +319,8 @@ console.log(`\n${'='.repeat(72)}\n${report}`)
 const outDir = fileURLToPath(new URL('../docs/evidence/', import.meta.url))
 mkdirSync(outDir, { recursive: true })
 const stamp = new Date().toISOString().slice(0, 10)
-const outFile = `${outDir}benchmark-${stamp}.md`
+// One file per backend per day: a same-day rerun against a different
+// embedder must not silently overwrite the first measurement.
+const outFile = `${outDir}benchmark-${stamp}-${EMBEDDER}.md`
 writeFileSync(outFile, report)
 console.log(`report written to ${outFile}`)

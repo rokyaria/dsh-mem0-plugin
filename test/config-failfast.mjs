@@ -24,23 +24,11 @@ import { Context } from '@deepseek-ai/cordis'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
 import * as plugin from '../lib/index.js'
+import { embedderConfig, vectorStoreConfig, describeBackends, embedderReachable, skip, EMBEDDER } from './backends.mjs'
 
 const GOOD = {
-  embedder: {
-    provider: 'ollama',
-    config: { url: 'http://localhost:11434', model: 'nomic-embed-text:latest' },
-  },
-  vectorStore: {
-    provider: 'elasticsearch',
-    config: {
-      collectionName: 'mem0_dsh_plugin_test',
-      host: 'localhost',
-      port: 9200,
-      username: 'elastic',
-      password: 'elastic',
-      useSsl: false,
-    },
-  },
+  embedder: embedderConfig(),
+  vectorStore: vectorStoreConfig('mem0_dsh_plugin_test'),
   preflight: { enabled: true, timeoutMs: 8000 },
   // Keep test history out of the user's DSH home.
   history: { dbPath: join(tmpdir(), 'dsh-mem0-test-history.db') },
@@ -133,6 +121,7 @@ async function expectStrictFailure(label, config) {
 
 console.log('='.repeat(72))
 console.log('启动行为：默认「可诊断」，strict 模式「加载即失败」')
+console.log(`后端：${describeBackends()}`)
 console.log('='.repeat(72))
 
 const CASES = [
@@ -166,7 +155,10 @@ const CASES = [
     pattern: /useSsl/,
   },
   {
+    // Needs a *working* embedder: preflight probes the embedder before the store,
+    // so with both broken the reported cause is the embedder, not the store.
     label: 'vector store 不可达（端口 9299）',
+    needsEmbedder: true,
     config: {
       ...GOOD,
       vectorStore: { provider: 'elasticsearch', config: { ...GOOD.vectorStore.config, port: 9299 } },
@@ -178,18 +170,21 @@ const CASES = [
     label: 'embedding 端点不可达（端口 11499）',
     config: {
       ...GOOD,
-      embedder: { provider: 'ollama', config: { url: 'http://localhost:11499', model: 'nomic-embed-text:latest' } },
+      embedder: { ...GOOD.embedder, config: { ...GOOD.embedder.config, url: 'http://localhost:11499', baseURL: 'http://localhost:11499' } },
     },
     pattern: /Embedding provider/i,
   },
   {
-    label: 'embedding 模型不存在',
+    // Ollama rejects an unknown model; LM Studio does not — it silently serves
+    // whichever embedding model is loaded (verified 2026-10-16: requesting
+    // "definitely-not-a-real-model" returned 1024 dims under model
+    // text-embedding-bge-m3). So this property only holds on Ollama, and the
+    // LM Studio difference is documented in README §5.4 instead of asserted here.
+    label: 'embedding 模型不存在（Ollama 会拒绝）',
+    ollamaOnly: true,
     config: {
       ...GOOD,
-      embedder: {
-        provider: 'ollama',
-        config: { url: 'http://localhost:11434', model: 'definitely-not-a-real-model' },
-      },
+      embedder: { ...GOOD.embedder, config: { ...GOOD.embedder.config, model: 'definitely-not-a-real-model' } },
     },
     pattern: /Embedding provider/i,
   },
@@ -200,9 +195,30 @@ const CASES = [
   },
 ]
 
-for (const testCase of CASES) {
-  await expectDiagnosable(testCase.label, testCase.config, testCase.pattern)
+// The store-unreachable scenarios need a live embedder (preflight probes the
+// embedder first). Without one they would assert on the wrong failure — skip
+// them loudly instead of reporting a defect that is not there.
+const embedderOk = await embedderReachable()
+if (!embedderOk) {
+  skip('需要活 embedder 的场景', '没有 embedding 端点应答 —— 起 Ollama，或设 MEM0_TEST_EMBEDDER=lmstudio')
 }
+
+let ran = 0
+let skipped = 0
+for (const testCase of CASES) {
+  if (testCase.needsEmbedder && !embedderOk) {
+    skipped += 1
+    continue
+  }
+  if (testCase.ollamaOnly && EMBEDDER !== 'ollama') {
+    skip(testCase.label, `后端是 ${EMBEDDER}：它不会拒绝未知 model id（见 README §5.4），这条只在 Ollama 上有意义`)
+    skipped += 1
+    continue
+  }
+  await expectDiagnosable(testCase.label, testCase.config, testCase.pattern)
+  ran += 1
+}
+console.log(`\n场景：跑过 ${ran} 个，跳过 ${skipped} 个（跳过的都打了 SKIP 行）`)
 
 // Strict mode is the opt-in escape hatch; prove it on two representative cases.
 await expectStrictFailure('缺少 embedder', { ...GOOD, embedder: undefined })
@@ -213,5 +229,5 @@ await expectStrictFailure('vector store 不可达', {
 })
 
 console.log(`\n${'='.repeat(72)}`)
-console.log(`✅ ${CASES.length} 个失败场景在默认模式下：插件加载 + 7 个工具注册 + mem0_status 报出真实原因`)
+console.log(`✅ ${ran} 个失败场景在默认模式下：插件加载 + 7 个工具注册 + mem0_status 报出真实原因`)
 console.log('✅ strict 模式下：插件加载失败且不注册任何工具')

@@ -14,7 +14,7 @@
 
 | 角色 | 作用 | 参考实现 |
 |---|---|---|
-| **Embedding 模型** | 把文本变成向量 | LM Studio 里的 `bge-m3`，或 Ollama `nomic-embed-text` |
+| **Embedding 模型** | 把文本变成向量 | **LM Studio 里的 `bge-m3`**（本仓库推荐并验证的路） |
 | **向量库** | 存向量并做相似度检索 | Elasticsearch **8.x**（插件钉死 v8 客户端，ES9 会被拒绝） |
 | **LLM**（可选） | 从对话里抽取事实 | 用户自己的 LLM；不配也能用，只是 `mem0_add` 默认 `infer:false` |
 
@@ -32,7 +32,7 @@
 bash scripts/probe.sh
 ```
 
-它逐项报：ES 在不在（8.x 才算可用）、LM Studio 有没有 embedding 模型、Ollama 在不在、
+它逐项报：ES 在不在（8.x 才算可用）、LM Studio 有没有 embedding 模型、
 docker/daemon、node 版本、配置行有没有写进 profile。**下面的手工命令是它的拆解版**，
 probe.sh 跑不了（比如没有 bash）时再用。
 
@@ -47,10 +47,6 @@ curl -s --max-time 5 http://localhost:1234/v1/models \
   | python3 -c "import sys,json;print('LM Studio models:', [m['id'] for m in json.load(sys.stdin).get('data',[])])" 2>/dev/null \
   || echo "LM Studio: 未在 localhost:1234 提供服务"
 
-# Ollama 在不在？
-curl -s --max-time 5 http://localhost:11434/api/tags \
-  | python3 -c "import sys,json;print('Ollama models:', [m['name'] for m in json.load(sys.stdin).get('models',[])])" 2>/dev/null \
-  || echo "Ollama: 未在 localhost:11434 提供服务"
 
 # docker 可用吗？
 docker version --format '{{.Server.Version}}' 2>/dev/null || echo "docker: 不可用"
@@ -60,7 +56,7 @@ docker version --format '{{.Server.Version}}' 2>/dev/null || echo "docker: 不�
 
 - **ES 已就绪**（版本 8.x）→ 记下 host/port/账号，跳到 §2
 - **ES 版本 ≥ 9** → 必须换 8.x，见 §2 的说明
-- **embedding 已就绪**（LM Studio 里有 embedding 模型，或 Ollama 有 `nomic-embed-text`/`bge-m3`）→ 跳到 §3
+- **embedding 已就绪**（LM Studio 里有 embedding 模型：`text-embedding-bge-m3`）→ 跳到 §3
 - 都没有 → §2 和 §3 各装一个
 
 ---
@@ -126,23 +122,19 @@ curl -s http://localhost:1234/v1/embeddings \
 > ⚠️ LM Studio 的模型 id 必须和上面 `-d` 里的 `model` **完全一致**（含 `text-embedding-` 前缀）。
 > 配置时把 `embedder.config.model` 写成同一个字符串。
 
-### 选项 B：Ollama（Agent 可全自动）
+### 只推荐 LM Studio 这条路
 
-```sh
-docker run -d --name dsh-ollama -p 11434:11434 ollama/ollama:0.20.7
-sleep 5
-docker exec dsh-ollama ollama pull nomic-embed-text      # 768 维
-curl -s http://localhost:11434/api/tags
-```
+本仓库**只维护 LM Studio 这条路**（它的 embedding 走本机 Metal，实测 `text-embedding-bge-m3` = 1024 维、
+首次 0.15 s、之后 0.015 s／次）。mem0 也支持别的 embedding provider，但那些组合没有在这里验证过，
+也不写步骤 —— 少一条路，少一份会过期的文档。
 
-Ollama 也可以跑 `bge-m3`（1024 维）：`docker exec dsh-ollama ollama pull bge-m3`。
-
-> **维度是不可逆的**：ES 索引一旦建好，`dense_vector` 的 dims 就固定了。
-> 换 embedding 模型必须换 `collectionName`，否则插件会在启动探测时直接报维度不匹配。
-
----
 
 ## 4. LLM（可选，默认用用户自己的）
+
+> ⚠️ **本机 LM Studio 当 LLM 跑 `infer: true` 需要一层适配**：mem0ai 发的 `response_format: json_object`
+> 会被 LM Studio 拒（400），而且它返回的空 `tool_calls: []` 会让 mem0ai 误判、推理模型的答案又藏在
+> `reasoning_content` 里。三件事都在 `docs/lmstudio-llm-shim`（见 README「本机模型跑 infer」一节）。
+> 配 `llm.provider: lmstudio` 但 `baseURL` 指向适配层即可 —— **不用额外装 openai 包**。
 
 `mem0_add` 的 `infer:true` 会用 LLM 从对话里抽取事实。**不配也能用**（默认 `infer:false`，原文存储）。
 
@@ -152,7 +144,6 @@ Ollama 也可以跑 `bge-m3`（1024 维）：`docker exec dsh-ollama ollama pull
 |---|---|---|
 | DeepSeek API key | `deepseek` | `apiKey`，可选 `model`（默认 `deepseek-chat`）、`baseURL` |
 | 任意 OpenAI 兼容网关（含 LM Studio 的 chat 模型） | `openai` | `baseURL` / `apiKey` / `model` |
-| Ollama 的 chat 模型 | `ollama` | `url`（默认 `http://localhost:11434`）、`model` |
 
 **问用户要，不要猜。** 需要 key 时明确询问；不要把 key 写进日志或回复里。
 
@@ -175,7 +166,7 @@ Ollama 也可以跑 `bge-m3`（1024 维）：`docker exec dsh-ollama ollama pull
       name: dsh-mem0-plugin
       config:
         embedder:
-          provider: lmstudio            # 用 Ollama 就改成 ollama
+          provider: lmstudio
           config:
             baseURL: http://localhost:1234/v1
             model: text-embedding-bge-m3

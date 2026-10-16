@@ -5,7 +5,7 @@
 # whether the row is allowed to start.
 #
 # The config below matches the deployment this plugin was developed against
-# (Elasticsearch 8 + Ollama `nomic-embed-text`).
+# (Elasticsearch 8 + LM Studio `text-embedding-bge-m3`, 1024 dims).
 # Override any key from the profile's own `cordis.patch.yml` — patches replace a
 # row's whole `config` value, so restate every key you still want.
 - insert:
@@ -15,10 +15,12 @@
         # ── Embedding model ────────────────────────────────────────────────
         # Required. The plugin refuses to load without it.
         embedder:
-          provider: ollama
+          provider: lmstudio
           config:
-            url: http://localhost:11434
-            model: nomic-embed-text:latest
+            # LM Studio 的 OpenAI 兼容端点（embedding 走本机 Metal）
+            baseURL: http://localhost:1234/v1
+            url: http://localhost:1234/v1
+            model: text-embedding-bge-m3
             # embeddingDims is detected by the startup probe when omitted.
 
         # ── Vector store ───────────────────────────────────────────────────

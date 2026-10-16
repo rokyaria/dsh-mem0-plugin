@@ -148,7 +148,7 @@ preset 会把行挂进 agent 作用域，于是**工具和引导一起**变成�
 | 组件 | 要求 | 备注 |
 |---|---|---|
 | Elasticsearch | **8.x** | 实测 8.14.3 全链路可用；ES9 服务端会被启动期显式拒绝（见 [§6.1](#61-为什么锁-elasticsearch-客户端-v8)） |
-| Embedding | 任意 mem0ai 支持的 provider | 参考部署用 LM Studio `bge-m3`（1024 维）或 Ollama `nomic-embed-text`（768 维） |
+| Embedding | 任意 mem0ai 支持的 provider | **本仓库推荐并验证 LM Studio `text-embedding-bge-m3`（1024 维）** |
 | Node | `^22.19.0 \|\| >=24.0.0` | 与 dsh 一致，`node:sqlite` 需要 ≥22.5 |
 
 这两个依赖的起法见 [`install.md`](./install.md) §2 与 §3。
@@ -169,7 +169,7 @@ preset 会把行挂进 agent 作用域，于是**工具和引导一起**变成�
 （[打包与安装插件](https://deepseek-harness.github.io/deepseek-harness/develop/basic/publish)）。
 
 **推荐走 [`install.md`](./install.md)**，它包含依赖探测、Docker 起 ES8、
-LM Studio/Ollama 装 embedding、配置写入与验收的完整流程。手工步骤如下：
+LM Studio 装 embedding、配置写入与验收的完整流程。手工步骤如下：
 
 ```sh
 # 在插件目录里先构建（分发预构建产物，用户无需工具链）
@@ -200,7 +200,7 @@ dsh --profile <name>
       name: dsh-mem0-plugin
       config:
         embedder:                      # 就绪所必需
-          provider: ollama
+          provider: lmstudio
           config:
             url: http://localhost:11434
             model: nomic-embed-text:latest
@@ -466,7 +466,7 @@ mem0 返回的对象带**显式 `undefined` 成员**（如未设置的 `updatedA
 
 ### 7.1 起测试依赖
 
-两样：**一个 ES 8** ＋ **一个 embedding 端点**（Ollama 或 LM Studio，任选）。
+两样：**一个 ES 8** ＋ **LM Studio 的 embedding 端点**（`text-embedding-bge-m3`）。
 先跑 `bash scripts/probe.sh` 看机器上已有什么，缺的再用下面命令补：
 
 ```sh
@@ -477,21 +477,9 @@ docker run -d --name dsh-es8 -p 9200:9200 --cpus 1.0 -m 2g \
   -e ELASTIC_PASSWORD=elastic -e "ES_JAVA_OPTS=-Xms1024m -Xmx1024m" \
   docker.elastic.co/elasticsearch/elasticsearch:8.14.3
 
-docker run -d --name dsh-ollama -p 11434:11434 ollama/ollama:0.20.7
-docker exec dsh-ollama ollama pull nomic-embed-text
-```
+# embedding：用本机 LM Studio（GUI：下载并加载 text-embedding-bge-m3，Developer 页起服务，默认 1234）
+# 本仓库只维护这条路；实测 1024 维、首次 0.15 s、之后 0.015 s／次。
 
-**或者用已在跑的 LM Studio**（本机 2026-10-16 实测：`text-embedding-bge-m3` → 1024 维，
-首次 0.15 s、之后 0.015 s／次）——那时测试这样跑：
-
-```sh
-export MEM0_TEST_EMBEDDER=lmstudio        # 等价于旧写法 BENCH_EMBEDDER=lmstudio
-npm test
-```
-
-> ⚠️ `elasticsearch:8.19.16` 镜像在 Docker Desktop 的 linuxkit 内核上起不来
-> （`seccomp unavailable: CONFIG_SECCOMP not compiled into kernel`）。
-> 8.14.3 正常——这也是 `resources/.../vector/README` 推荐它的原因。
 
 ### 7.2 跑测试
 
@@ -499,8 +487,8 @@ npm test
 npm run typecheck && npm run build && npm test
 ```
 
-`npm test` 串起七个套件。**后端只在一处选**（`test/backends.mjs`）：`MEM0_TEST_EMBEDDER`（`ollama`｜`lmstudio`，
-默认 `ollama`）、`MEM0_TEST_EMBEDDER_URL`、`MEM0_TEST_MODEL`、`MEM0_TEST_ES_*`；旧的 `BENCH_*` 名字仍然认。
+`npm test` 串起七个套件。**后端只在一处选**（`test/backends.mjs`）：`MEM0_TEST_EMBEDDER`（`lmstudio`｜`ollama`，
+默认 `lmstudio`）、`MEM0_TEST_EMBEDDER_URL`、`MEM0_TEST_MODEL`、`MEM0_TEST_ES_*`；旧的 `BENCH_*` 名字仍然认。
 **需要后端而机器上没有时，套件打一行 `⏭ SKIP` 并退出 0** —— 缺一个可选依赖不是代码缺陷，假失败只会训练人忽略测试。
 
 `boot-policy` / `history-workspace` / `guidance` 不需要任何后端：
@@ -512,7 +500,7 @@ npm run typecheck && npm run build && npm test
 | `test/guidance.mjs` | 引导段 12 个场景：注入 / 替换 / 追加 / 关闭 / 排序 / 工具描述覆盖 / 拼写校验 / 卸载清理 / **per-agent 注册 / preset 过滤 / 组合校验** | 否（后端故意不可达） |
 | `test/bundle-config.mjs` | `cordis.patch.yml` 的默认配置能过 schema 并真实启动插件 | 是 |
 | `test/config-failfast.mjs` | 8 个失败场景（其中「向量库不可达」需要一个**活** embedder —— preflight 先探 embedder）在默认模式下「插件加载 + 8 工具 + `mem0_status` 报因」，strict 模式下加载失败 | 是（不可用时该场景 SKIP） |
-| — | 注：`embedding 模型不存在要报错` 只在 Ollama 上断言；LM Studio 不拒绝未知 model id（见 §7.3） | — |
+| — | 注：`embedding 模型不存在要报错` 只在会拒绝未知模型的后端上断言；LM Studio 不拒绝（见 §7.3） | — |
 | `test/scope-delete.mjs` | 作用域删除真正清空（两种 `refreshAfterWrite` 设置），锁住 §6.3 的修复 | 是 |
 | `test/e2e.mjs` | 真 Cordis `Context` + 真 `ToolRuntime` + 真 ES8，11 组断言 | 是 |
 | `test/benchmark.mjs` | 性能基线（不参与 `npm test`，单独跑 `npm run test:bench`） | 是 |
@@ -544,7 +532,7 @@ BENCH_EMBEDDER=lmstudio BENCH_MODEL=text-embedding-bge-m3 npm run test:bench
 报告写入 `docs/evidence/benchmark-<date>-<后端>.md` —— **文件名带后端**，
 同一天换 embedding 重跑不会覆盖上一份（2026-10-16 踩过：日期命名的文件被另一次跑覆盖）。
 
-基线 A（本地 Ollama `nomic-embed-text` 768 维 + ES 8.14.3）：
+基线 A（历史记录：早期用 Ollama `nomic-embed-text` 768 维 + ES 8.14.3 测的，保留备查）：
 
 | 指标 | 值 |
 |---|---|
@@ -584,7 +572,7 @@ BENCH_EMBEDDER=lmstudio BENCH_MODEL=text-embedding-bge-m3 npm run test:bench
 - **LM Studio 不拒绝未知 model id**（新发现，2026-10-16）：请求 `model: "definitely-not-a-real-model"`，
   它返回 **HTTP 200 / 1024 维**，响应里 `model` 字段是当前加载的 embedding 模型 —— **静默替换**。
   后果：模型名写错不会报错，但向量空间可能不是预期那个；**换模型必须重建索引**。
-  Ollama 在同样情况下会报错（所以 `config-failfast` 那条断言只在 Ollama 上跑）。
+  会拒绝未知模型的后端（例如 Ollama）则会直接报错 —— 所以 `config-failfast` 里那条断言只在那种后端上跑。
 - **ES9 服务端**：按设计直接拒绝，未做兼容性尝试。
 - **并发**：所有性能数字都是单线程顺序调用，没有测并发写入/检索。
 

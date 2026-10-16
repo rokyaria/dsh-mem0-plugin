@@ -6,7 +6,7 @@
  * have, without the suites silently asserting on the wrong failure. So the
  * backend is chosen in one place, overridable by environment:
  *
- *   MEM0_TEST_EMBEDDER=ollama | lmstudio      (default: ollama)
+ *   MEM0_TEST_EMBEDDER=lmstudio | ollama      (default: lmstudio)
  *   MEM0_TEST_EMBEDDER_URL=...                (default per provider, see below)
  *   MEM0_TEST_MODEL=...                       (default per provider)
  *   MEM0_TEST_ES_HOST / _PORT / _USER / _PASS
@@ -20,7 +20,7 @@
  * failure trains people to ignore it.
  */
 
-export const EMBEDDER = process.env.MEM0_TEST_EMBEDDER ?? process.env.BENCH_EMBEDDER ?? 'ollama'
+export const EMBEDDER = process.env.MEM0_TEST_EMBEDDER ?? process.env.BENCH_EMBEDDER ?? 'lmstudio'
 
 export const EMBEDDER_URL =
   process.env.MEM0_TEST_EMBEDDER_URL ??

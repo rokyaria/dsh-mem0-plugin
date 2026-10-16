@@ -1,7 +1,6 @@
 {
   "name": "dsh-mem0-plugin",
   "version": "0.3.0",
-  "type": "module",
   "description": "mem0 long-term memory for DeepSeek Harness: in-process mem0ai OSS (no Python sidecar), Elasticsearch 8 vector store, pluggable embedding model. Tools: mem0_add / mem0_search / mem0_get / mem0_update / mem0_delete / mem0_get_all / mem0_history / mem0_status.",
   "keywords": [
     "dsh",
@@ -16,9 +15,19 @@
     "rag"
   ],
   "license": "MIT",
+  "author": "rokyaria",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rokyaria/dsh-mem0-plugin.git"
+  },
+  "homepage": "https://github.com/rokyaria/dsh-mem0-plugin#readme",
+  "bugs": {
+    "url": "https://github.com/rokyaria/dsh-mem0-plugin/issues"
+  },
   "engines": {
     "node": "^22.19.0 || >=24.0.0"
   },
+  "type": "module",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
   "exports": {
@@ -89,6 +98,5 @@
     "@types/node": "^22.20.0",
     "typescript": "~5.7.2",
     "yaml": "^2.9.1"
-  },
-  "author": "rokyaria"
+  }
 }

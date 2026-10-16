@@ -161,6 +161,10 @@ preset 会把行挂进 agent 作用域，于是**工具和引导一起**变成�
 
 ## 3. 安装
 
+> **pnpm 12**：构建脚本放行字段已改名 `onlyBuiltDependencies` → **`allowBuilds`**，且未登记的构建脚本
+> 会让 `pnpm install` **退出非 0**（`ERR_PNPM_IGNORED_BUILDS` —— 依赖其实装好了）。本仓库写明
+> `allowBuilds: {better-sqlite3: false}`：那一个原生模块**故意不构建**（插件用 `node:sqlite`，见 §6.2）。
+
 插件以 **bundle**（组合包）形式分发：npm 包 + 一个 patch 层
 （[打包与安装插件](https://deepseek-harness.github.io/deepseek-harness/develop/basic/publish)）。
 
@@ -462,6 +466,9 @@ mem0 返回的对象带**显式 `undefined` 成员**（如未设置的 `updatedA
 
 ### 7.1 起测试依赖
 
+两样：**一个 ES 8** ＋ **一个 embedding 端点**（Ollama 或 LM Studio，任选）。
+先跑 `bash scripts/probe.sh` 看机器上已有什么，缺的再用下面命令补：
+
 ```sh
 docker run -d --name dsh-es8 -p 9200:9200 --cpus 1.0 -m 2g \
   -e discovery.type=single-node \
@@ -474,6 +481,14 @@ docker run -d --name dsh-ollama -p 11434:11434 ollama/ollama:0.20.7
 docker exec dsh-ollama ollama pull nomic-embed-text
 ```
 
+**或者用已在跑的 LM Studio**（本机 2026-10-16 实测：`text-embedding-bge-m3` → 1024 维，
+首次 0.15 s、之后 0.015 s／次）——那时测试这样跑：
+
+```sh
+export MEM0_TEST_EMBEDDER=lmstudio        # 等价于旧写法 BENCH_EMBEDDER=lmstudio
+npm test
+```
+
 > ⚠️ `elasticsearch:8.19.16` 镜像在 Docker Desktop 的 linuxkit 内核上起不来
 > （`seccomp unavailable: CONFIG_SECCOMP not compiled into kernel`）。
 > 8.14.3 正常——这也是 `resources/.../vector/README` 推荐它的原因。
@@ -484,7 +499,11 @@ docker exec dsh-ollama ollama pull nomic-embed-text
 npm run typecheck && npm run build && npm test
 ```
 
-`npm test` 串起七个套件；`boot-policy` / `history-workspace` / `guidance` 不需要后端在线：
+`npm test` 串起七个套件。**后端只在一处选**（`test/backends.mjs`）：`MEM0_TEST_EMBEDDER`（`ollama`｜`lmstudio`，
+默认 `ollama`）、`MEM0_TEST_EMBEDDER_URL`、`MEM0_TEST_MODEL`、`MEM0_TEST_ES_*`；旧的 `BENCH_*` 名字仍然认。
+**需要后端而机器上没有时，套件打一行 `⏭ SKIP` 并退出 0** —— 缺一个可选依赖不是代码缺陷，假失败只会训练人忽略测试。
+
+`boot-policy` / `history-workspace` / `guidance` 不需要任何后端：
 
 | 套件 | 覆盖 | 需要服务 |
 |---|---|---|
@@ -492,7 +511,8 @@ npm run typecheck && npm run build && npm test
 | `test/history-workspace.mjs` | 历史库位置决策表 7 个场景：唯一工作区 / 默认工作区 / 首个注册 / 显式配置 / 无注册表 / 自愈迁移 | 否（后端故意不可达） |
 | `test/guidance.mjs` | 引导段 12 个场景：注入 / 替换 / 追加 / 关闭 / 排序 / 工具描述覆盖 / 拼写校验 / 卸载清理 / **per-agent 注册 / preset 过滤 / 组合校验** | 否（后端故意不可达） |
 | `test/bundle-config.mjs` | `cordis.patch.yml` 的默认配置能过 schema 并真实启动插件 | 是 |
-| `test/config-failfast.mjs` | 8 个失败场景在默认模式下「插件加载 + 8 工具 + `mem0_status` 报因」，strict 模式下加载失败 | 是 |
+| `test/config-failfast.mjs` | 8 个失败场景（其中「向量库不可达」需要一个**活** embedder —— preflight 先探 embedder）在默认模式下「插件加载 + 8 工具 + `mem0_status` 报因」，strict 模式下加载失败 | 是（不可用时该场景 SKIP） |
+| — | 注：`embedding 模型不存在要报错` 只在 Ollama 上断言；LM Studio 不拒绝未知 model id（见 §7.3） | — |
 | `test/scope-delete.mjs` | 作用域删除真正清空（两种 `refreshAfterWrite` 设置），锁住 §6.3 的修复 | 是 |
 | `test/e2e.mjs` | 真 Cordis `Context` + 真 `ToolRuntime` + 真 ES8，11 组断言 | 是 |
 | `test/benchmark.mjs` | 性能基线（不参与 `npm test`，单独跑 `npm run test:bench`） | 是 |
@@ -521,8 +541,10 @@ COUNT=300 QUERIES=50 npm run test:bench
 BENCH_EMBEDDER=lmstudio BENCH_MODEL=text-embedding-bge-m3 npm run test:bench
 ```
 
-报告写入 `docs/evidence/benchmark-<date>.md`。基线（本地 Ollama `nomic-embed-text` 768 维 +
-ES 8.14.3，单机、无并发）：
+报告写入 `docs/evidence/benchmark-<date>-<后端>.md` —— **文件名带后端**，
+同一天换 embedding 重跑不会覆盖上一份（2026-10-16 踩过：日期命名的文件被另一次跑覆盖）。
+
+基线 A（本地 Ollama `nomic-embed-text` 768 维 + ES 8.14.3）：
 
 | 指标 | 值 |
 |---|---|
@@ -530,6 +552,15 @@ ES 8.14.3，单机、无并发）：
 | `mem0_search` p50 / p95 | ~47 ms / ~340 ms |
 | `mem0_get_all`（100 条全扫） | ~7 ms |
 | recall@1 / recall@5 / MRR | 100% / 100% / 1.0000 |
+
+基线 B（LM Studio `text-embedding-bge-m3` 1024 维 + ES 8.14.3，2026-10-16 补测）：
+
+| 指标 | 值 |
+|---|---|
+| `mem0_add` p50 / p95 | ~44 ms / ~369 ms |
+| `mem0_search` p50 / p95 | ~39 ms / ~296 ms |
+| `mem0_get_all`（100 条全扫） | ~13 ms |
+| recall@1 | 100%（30 个唯一可判定查询） |
 
 读数要点：
 
@@ -546,10 +577,14 @@ ES 8.14.3，单机、无并发）：
 
 - **`infer: true` 的真实抽取链路**：本机没有可用的 LLM 凭据，
   因此只验证了「无 `llm` 时明确报错」这条分支。配上 `llm` 后走的是 mem0 官方代码路径。
-- **安装进桌面版 profile**：本会话的审批被禁用，未改动正在运行的 profile。
-- **LM Studio 作为 embedder**：`lmstudio` provider 的配置字段是从 SDK 源码读出来的
-  （`baseURL` / `apiKey` / `model`），但本机没有 LM Studio，未端到端跑过。
-  Ollama 路径是实测的。
+- ~~安装进桌面版 profile~~ → **2026-10-16 已实测**：软链进 profile 的 `node_modules` ＋ `cordis.patch.yml` 加一行，
+  `mem0_status` 返回 `OK`、e2e 全过（详见 install.md §6 的实测装法）。注意 patch 层是**启动时**读的，改完要重启应用。
+- ~~LM Studio 作为 embedder~~ → **2026-10-16 已实测**：`text-embedding-bge-m3` = 1024 维，
+  e2e / scope-delete / config-failfast 全过，性能见 §7.2.1 基线 B。
+- **LM Studio 不拒绝未知 model id**（新发现，2026-10-16）：请求 `model: "definitely-not-a-real-model"`，
+  它返回 **HTTP 200 / 1024 维**，响应里 `model` 字段是当前加载的 embedding 模型 —— **静默替换**。
+  后果：模型名写错不会报错，但向量空间可能不是预期那个；**换模型必须重建索引**。
+  Ollama 在同样情况下会报错（所以 `config-failfast` 那条断言只在 Ollama 上跑）。
 - **ES9 服务端**：按设计直接拒绝，未做兼容性尝试。
 - **并发**：所有性能数字都是单线程顺序调用，没有测并发写入/检索。
 

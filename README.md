@@ -77,6 +77,23 @@ HTTP 接口），agent 再通过 HTTP 调它。
 
 ---
 
+## 验证到哪一步了
+
+**已端到端验证**（真依赖链）：
+
+| 路径 | 状态 |
+|---|---|
+| Elasticsearch 8.14.3（单节点、明文 http） | ✅ e2e / scope-delete / config-failfast 全过 |
+| embedding = **Ollama** `nomic-embed-text`（768 维） | ✅ 原始基线 |
+| embedding = **LM Studio** `text-embedding-bge-m3`（1024 维） | ✅ 2026-10-16 补验（e2e 全过：写后即读、作用域隔离、分页、时间窗） |
+| 装进**桌面版 profile** | ✅ 2026-10-16（软链进 profile 的 `node_modules` ＋ `cordis.patch.yml` 加一行） |
+| `startup.strict` 的失败路径 | ✅ `boot-policy`（调真 `boot()`） |
+
+**尚未端到端验证**：`infer: true` 的真实事实抽取（需要 LLM 凭据）、并发写入、ES9。
+细节与证据见 [development.md](./development.md) §7.3 与 [docs/design-notes.md](./docs/design-notes.md) §3。
+
+---
+
 ## 怎么安装
 
 ### 最省事：交给 Agent
@@ -151,6 +168,16 @@ dsh plugin --profile <profile> add /绝对路径/dsh-mem0-plugin
 配了之后 `mem0_add` 默认开启抽取。任何 OpenAI 兼容端点都行
 （DeepSeek、LM Studio 的 chat 模型、Ollama……）。
 
+### ⚠️ LM Studio 会静默替换未知的 model id
+
+实测（2026-10-16，走 LM Studio 的 `/v1/embeddings`）：请求 `model: "definitely-not-a-real-model"`，
+返回 **HTTP 200**、**1024 维**，响应里的 `model` 字段是 `text-embedding-bge-m3` ——
+**它不报错，而是拿当前加载的 embedding 模型顶上。**
+
+后果：**embedding 模型名写错不会报错**，但向量空间可能不是你要的那个；一条索引里混进两种向量空间，
+检索会**静默**变差。所以：**换 embedding 模型必须重建索引**，并且把 `mem0_status` 报出的维度和预期对一遍。
+（Ollama 在未知模型上会直接报错。）
+
 ### 其它可选项
 
 | 配置 | 默认 | 说明 |
@@ -203,6 +230,28 @@ guidance:
 toolDescriptions:
   mem0_add: '把用户希望记住的持久事实或偏好存起来。'
 ```
+
+---
+
+## 怎么跑测试
+
+```sh
+bash scripts/probe.sh          # 先看这台机器上有什么（只读，不改任何东西）
+pnpm install && pnpm build     # pnpm 12 见下
+export MEM0_TEST_EMBEDDER=lmstudio   # 不设则默认 ollama
+npm test
+```
+
+- **后端只在一处选**（`test/backends.mjs`）：`MEM0_TEST_EMBEDDER`、`MEM0_TEST_EMBEDDER_URL`、
+  `MEM0_TEST_MODEL`、`MEM0_TEST_ES_HOST/_PORT/_USER/_PASS`；旧的 `BENCH_*` 名字仍然认。
+- **缺后端 ≠ 失败**：需要活后端的套件会打一行 `⏭ SKIP` 然后**退出 0** —— 缺一个可选依赖不是代码缺陷，
+  假失败只会训练人忽略测试。
+- **`config-failfast` 里「vector store 不可达」那条需要活的 embedder**（preflight 先探 embedder，再探 store），
+  没有 embedder 时会 SKIP 并说明原因。
+- **「embedding 模型不存在要报错」只在 Ollama 上断言** —— LM Studio 不拒绝未知 model id（见上）。
+- **pnpm 12**：`onlyBuiltDependencies` 已改名 `allowBuilds`，且未登记的构建脚本会让 `pnpm install`
+  **退出非 0**（`ERR_PNPM_IGNORED_BUILDS`）；本仓库用 `allowBuilds: {better-sqlite3: false}` 明确拒绝它。
+- 性能基线每跑一次写一份 `docs/evidence/benchmark-<日期>-<后端>.md`，同日后端不同**不会互相覆盖**。
 
 ---
 

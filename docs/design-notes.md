@@ -290,6 +290,36 @@ env: { ELECTRON_RUN_AS_NODE: '1', ... }
 唯一工作区 → 用它；多个 → dsh 默认；没有默认 → 首个注册；
 显式 `history.dbPath` → 覆盖一切；无注册表 → `$DSH_HOME`；注册表迟到 → 自愈迁移。
 
+### 2.15 pnpm 12：放行字段改名，未登记就**硬失败**
+
+`onlyBuiltDependencies: []`（pnpm 9/10 的写法）在 **pnpm 12.8.1** 上会让 `pnpm install` 报
+`ERR_PNPM_IGNORED_BUILDS` 并**退出 1** —— 依赖其实已经装好了，是「有构建脚本没被登记」本身成了错误。
+实测三种写法：
+
+| 写法 | 结果 |
+|---|---|
+| `onlyBuiltDependencies: []` | exit 1（本仓库原来就是这样，CI 会红） |
+| `allowBuilds: ["!better-sqlite3"]` | exit 1 |
+| `allowBuilds: {better-sqlite3: false}` | **exit 0** ✅ |
+
+pnpm 12 把 `onlyBuiltDependencies` 换成了 **`allowBuilds` 映射**。改完之后意图不变
+（那个原生模块仍然不构建，见 §2.3），但安装不再假失败。
+
+### 2.16 LM Studio 对未知 model id **不报错，而是静默替换**
+
+`config-failfast` 里原本有一条「embedding 模型不存在 → 必须报错」。在 Ollama 上它成立；
+换到 LM Studio 后这条**失败**了 —— 因为 `mem0_status` 报了 OK。追下去发现不是插件的 bug：
+
+```sh
+curl -s http://127.0.0.1:1234/v1/embeddings -H 'Content-Type: application/json' \
+  -d '{"model":"definitely-not-a-real-model","input":"probe"}'
+# → HTTP 200，1024 维，而响应里的 model 字段是 text-embedding-bge-m3
+```
+
+**它拿当前加载的 embedding 模型顶上了。**后果比「不报错」严重：一条索引里可能混进两种
+向量空间（比如你以为在用 768 维的 nomic，实际写进去的是 1024 维的 bge-m3），而检索只会
+**静默变差**。所以：① 那条断言改成只在 Ollama 上跑；② 文档里写明**换 embedding 模型必须重建索引**。
+
 ## 3. 验证证据
 
 环境：
@@ -310,8 +340,13 @@ env: { ELECTRON_RUN_AS_NODE: '1', ... }
 | `scope-delete.mjs` | 两种 `refreshAfterWrite` 设置下 25 条作用域都真正清空（`remaining=0`，`deleted=25`） |
 | `e2e.mjs` | 11 组断言通过（7 工具 / 写后即读 / 时间窗扫描 / 分页 / 历史轨迹 / 作用域隔离 / 参数护栏 / 卸载撤销） |
 
-性能基线见 `docs/evidence/benchmark-2026-10-16.md`：
+性能基线见 `docs/evidence/benchmark-2026-10-16-ollama.md`（另有 `-lmstudio.md`）：
 写入 p50 ~35 ms、检索 p50 ~47 ms、100 条全扫 ~7 ms、recall@1 = 100%（30 个唯一可判定查询）。
+
+**2026-10-16 复核（第二个后端）**：把同一套测试换到 **LM Studio `text-embedding-bge-m3`（1024 维）**
+上重跑 —— 七个套件全过（`e2e` 全断言、`scope-delete` 两种模式都真正清空、`config-failfast` 8 场景中
+7 个跑过 1 个按后端 SKIP）。这一轮还顺手修了三处：`pnpm install` 在 pnpm 12 上假失败（§2.15）、
+需要活后端的套件在缺后端时假失败（改成显式 SKIP）、benchmark 报告按日期命名会互相覆盖（改成带后端）。
 
 `e2e.mjs` / `scope-delete.mjs` 用的是**真**依赖链：
 `new Context()` + `@deepseek-ai/dsh-system-prompt` + `@deepseek-ai/dsh-tools` 的
@@ -334,8 +369,9 @@ env: { ELECTRON_RUN_AS_NODE: '1', ... }
 | 项 | 状态 | 原因 |
 |---|---|---|
 | `infer: true` 的真实抽取 | 未验证 | 本机没有可用 LLM 凭据；只验证了「缺 `llm` 明确报错」分支 |
-| 装进桌面版 profile | 未执行 | 本会话审批被禁用，不去改动正在运行的 profile |
-| LM Studio 作为 embedder | 未端到端验证 | provider 字段是从 SDK 源码读的；本机没有 LM Studio，Ollama 路径是实测的 |
+| ~~装进桌面版 profile~~ | **已执行（2026-10-16）** | 软链进 profile `node_modules` ＋ `cordis.patch.yml` 加一行；`mem0_status` = OK，e2e 全过 |
+| ~~LM Studio 作为 embedder~~ | **已端到端验证（2026-10-16）** | `text-embedding-bge-m3` = 1024 维；性能见 §7.2.1 基线 B |
+| LM Studio 静默替换未知 model id | 已知差异（非缺陷） | 见 §2.16；测试那条断言改为只在 Ollama 上跑 |
 | ES9 服务端 | 主动拒绝 | 见 §2.4 |
 | 并发 | 未测 | 所有性能数字都是单线程顺序调用 |
 | `GET /memories/{id}`、`/reset`、`/configure` | 未实现 | 不在要求范围内；SDK 能力都在，按 `src/tools.ts` 现有写法扩即可 |
@@ -346,8 +382,8 @@ env: { ELECTRON_RUN_AS_NODE: '1', ... }
 
 1. **补 LLM 后跑一遍 `infer: true`**，确认「抽取事实」路径与 Python 版语义一致
    （这是唯一还没走通的官方代码路径）。
-2. **桌面版安装链路**：把 bundle 装进 `~/.dsh/profiles/desktop` 走一遍
-   （设置 → 插件），确认 `cordis.patch.yml` 的层真的被叠加。
+2. ~~桌面版安装链路~~ → **2026-10-16 已走通**（软链 + patch 行）。剩下的只有一步**运行时确认**：
+   重启应用后 `mem0_*` 工具应出现在会话里 —— patch 层是启动时读的，改完不重启不生效。
 3. **并发基准**：目前只测了单线程。多个 agent 同时写记忆时的表现未知，
    而 `refreshAfterWrite` 在并发下可能成为争用点。
 4. **过期记忆淘汰**：`mem0_get_all` 已经能按时间窗扫描，但还没有「扫描 + 删除」的

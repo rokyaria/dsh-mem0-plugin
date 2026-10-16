@@ -26,6 +26,16 @@
 
 ## 1. 探测现状（不要跳过）
 
+**先跑这个**（只读，不装、不改、不启容器）：
+
+```sh
+bash scripts/probe.sh
+```
+
+它逐项报：ES 在不在（8.x 才算可用）、LM Studio 有没有 embedding 模型、Ollama 在不在、
+docker/daemon、node 版本、配置行有没有写进 profile。**下面的手工命令是它的拆解版**，
+probe.sh 跑不了（比如没有 bash）时再用。
+
 ```sh
 # Elasticsearch 在不在？版本对不对？
 curl -s -u elastic:elastic --max-time 5 http://localhost:9200 \
@@ -90,6 +100,12 @@ curl -s -u elastic:elastic http://localhost:9200 | head -c 200
 ## 3. 装 Embedding 模型（已有则复用）
 
 ### 选项 A：LM Studio + bge-m3（用户已有 LM Studio 时首选）
+
+> ✅ **这条路 2026-10-16 已端到端验证**：`text-embedding-bge-m3` → **1024 维**，
+> 首次调用 0.15 s（含 JIT 加载）、之后 0.015 s／次；e2e 全套通过。
+>
+> ⚠️ **但 LM Studio 不拒绝未知 model id** —— 名字写错它会拿当前加载的 embedding 模型顶上（不报错）。
+> 所以下面的 `dims` 必须是自己期望的那个数，**换模型要重建索引**。详见 README「⚠️ LM Studio 会静默替换未知的 model id」。
 
 LM Studio 是 GUI 应用，**Agent 无法完全自动安装**。分两步：
 
@@ -202,6 +218,22 @@ print('YAML OK')
 ---
 
 ## 6. 安装插件本体
+
+> **pnpm 12 注意**：构建脚本的放行字段从 `onlyBuiltDependencies` 改成了 **`allowBuilds`**，
+> 而且**未登记的构建脚本会让 `pnpm install` 退出非 0**（`ERR_PNPM_IGNORED_BUILDS`，其实依赖已经装好）。
+> 本仓库用 `allowBuilds: {better-sqlite3: false}` 明确拒绝那一个原生模块（插件用 `node:sqlite`，不需要它）。
+
+> **桌面版 profile 的实测装法**（2026-10-16，公开 CLI 管不了 Desktop profile）：
+> ```sh
+> cp -R <克隆目录> <工作区>/env/dsh-plugins/dsh-mem0-plugin      # 去掉 .git
+> ln -sfn <工作区>/env/dsh-plugins/dsh-mem0-plugin ~/.dsh/profiles/desktop/node_modules/dsh-mem0-plugin
+> # 然后在 cordis.patch.yml 末尾加一行（改前先备份）：
+> # - id: mem0
+> #   name: dsh-mem0-plugin
+> #   config: { ... }
+> ```
+> **patch 层是启动时读的** —— 加完要重启应用（或在插件界面 reload），`mem0_*` 工具才会出现在会话里。
+> 验证顺序：重启 → 调 `mem0_status`（第一行 `OK`）→ 跑 `test/e2e.mjs`。
 
 ```sh
 # 源码目录（Agent 自己 clone / 构建的情况）

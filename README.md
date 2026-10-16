@@ -85,10 +85,13 @@ HTTP 接口），agent 再通过 HTTP 调它。
 |---|---|
 | Elasticsearch 8.14.3（单节点、明文 http） | ✅ e2e / scope-delete / config-failfast 全过 |
 | embedding = **LM Studio** `text-embedding-bge-m3`（1024 维） | ✅ 2026-10-16 补验（e2e 全过：写后即读、作用域隔离、分页、时间窗） |
-| 装进**桌面版 profile** | ✅ 2026-10-16（软链进 profile 的 `node_modules` ＋ `cordis.patch.yml` 加一行） |
+| 装进**桌面版 profile** | ✅ 2026-10-16 22:16 —— **在真宿主里挂起来了**：`mem0_status` → `ok: true`、8 个工具在线（此前文档写的装法是错的，见 [install.md](./install.md) §6 的坑） |
 | `startup.strict` 的失败路径 | ✅ `boot-policy`（调真 `boot()`） |
 
-**尚未端到端验证**：`infer: true` 的真实事实抽取（需要 LLM 凭据）、并发写入、ES9。
+**尚未端到端验证**：并发写入、ES9。
+（`infer: true` 已在 2026-10-16 验过：本机 LM Studio 需经 [tools/lmstudio-shim](./tools/lmstudio-shim/) 适配，DeepSeek 可直接用；
+实测能抽事实、重复写入不涨条数。）
+细节与证据见 [development.md](./development.md) §7.3 与 [docs/design-notes.md](./docs/design-notes.md) §3。
 细节与证据见 [development.md](./development.md) §7.3 与 [docs/design-notes.md](./docs/design-notes.md) §3。
 
 ---

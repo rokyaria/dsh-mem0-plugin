@@ -320,6 +320,27 @@ curl -s http://127.0.0.1:1234/v1/embeddings -H 'Content-Type: application/json' 
 向量空间（比如你以为在用 768 维的 nomic，实际写进去的是 1024 维的 bge-m3），而检索只会
 **静默变差**。所以：① 那条断言改成只在 Ollama 上跑；② 文档里写明**换 embedding 模型必须重建索引**。
 
+### 2.17 本机 LM Studio 当 LLM：三个坑，和一个「看起来对、其实更糟」的修法
+
+`infer: true` 要走 LLM。把 `llm` 指向本机 LM Studio 时连撞三件事：
+
+| # | 现象 | 根因 |
+|---|---|---|
+| ① | 400 `'response_format.type' must be 'json_schema' or 'text'` | mem0ai 继承的 OpenAI 客户端发 `json_object`，**LM Studio 不认** |
+| ② | `TypeError: text.replace is not a function` | LM Studio 带 **空的 `tool_calls: []`**，`if (response.tool_calls)` 在 JS 里对空数组为真 → 返回对象而非字符串 |
+| ③ | 抽出 0 条 | 本机是**推理模型**：答案在 `reasoning_content`，`content` 空 |
+
+**这里有个值得记的弯路**：第一版把 `json_object` 改写成 `json_schema`（`{type:'object', additionalProperties:true}`，
+想着「只要是 JSON 就行」）。结果更糟 —— LM Studio **会照着 schema 约束**，模型于是规规矩矩交出一个
+**形状正确、内容为空**的 `{"memory": [{}]}`，mem0 的 zod 校验（`id`/`text` 必填）失败 → 依然 0 条。
+
+**改成 LM Studio 也接受的 `text`（=不加约束）才对**：让模型按 mem0 自己的提示词输出，mem0 的 `extractJson`
+本来就会剥代码块、从文本里找 JSON。**「把 A 翻译成 B」时，要翻的是请求者的意图，不是它字面上的形状。**
+
+配套实现见 [tools/lmstudio-shim/](../tools/lmstudio-shim/)：本地转发、不改 mem0ai、不需要 `openai` 包、
+换 provider 或升级 SDK 都不受影响。实测（`qwen3.6-35b-a3b`）：能抽出事实；同一段对话重复写入**条数不涨**（去重生效）；
+每次 3–15 s（本地推理）。
+
 ## 3. 验证证据
 
 环境：

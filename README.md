@@ -59,7 +59,7 @@ HTTP 接口），agent 再通过 HTTP 调它。
 - **去重与合并**：走上面这条抽取路径时，由 mem0 判断新内容和已有记忆是新增、合并还是替换
 - **向量检索**：embedding + kNN 排序、相似度阈值、可选 rerank
 - **provider 生态**：embedding 模型和向量库都用 mem0 支持的 provider。
-  仓库里的参考部署用 **Elasticsearch 8** 存向量、**Ollama** 提供 embedding；
+  仓库里的参考部署用 **Elasticsearch 8** 存向量、**LM Studio** 提供 embedding；
   [`install.md`](./install.md) 推荐的是 **LM Studio + `bge-m3`**，两者都能用
 - **记忆结构**：索引布局、`metadata.user_id/agent_id/run_id` 作用域、
   `expiration_date` 过期语义，都沿用 mem0 的约定
@@ -84,7 +84,6 @@ HTTP 接口），agent 再通过 HTTP 调它。
 | 路径 | 状态 |
 |---|---|
 | Elasticsearch 8.14.3（单节点、明文 http） | ✅ e2e / scope-delete / config-failfast 全过 |
-| embedding = **Ollama** `nomic-embed-text`（768 维） | ✅ 原始基线 |
 | embedding = **LM Studio** `text-embedding-bge-m3`（1024 维） | ✅ 2026-10-16 补验（e2e 全过：写后即读、作用域隔离、分页、时间窗） |
 | 装进**桌面版 profile** | ✅ 2026-10-16（软链进 profile 的 `node_modules` ＋ `cordis.patch.yml` 加一行） |
 | `startup.strict` 的失败路径 | ✅ `boot-policy`（调真 `boot()`） |
@@ -99,7 +98,7 @@ HTTP 接口），agent 再通过 HTTP 调它。
 ### 最省事：交给 Agent
 
 把仓库交给 dsh，让它读 [`install.md`](./install.md)——那是写给 Agent 执行的安装手册：
-先探测你机器上已有什么（ES、LM Studio、Ollama），**能复用就复用**，缺什么才装什么，
+先探测你机器上已有什么（ES、LM Studio），**能复用就复用**，缺什么才装什么，
 最后用 `mem0_status` 验收。
 
 ### 手动
@@ -116,9 +115,8 @@ docker run -d --name dsh-es8 -p 9200:9200 --cpus 1.0 -m 2g \
   -e ELASTIC_PASSWORD=elastic -e "ES_JAVA_OPTS=-Xms1024m -Xmx1024m" \
   docker.elastic.co/elasticsearch/elasticsearch:8.14.3
 
-# 2) embedding：LM Studio 里加载 bge-m3，或用 Ollama
-docker run -d --name dsh-ollama -p 11434:11434 ollama/ollama:0.20.7
-docker exec dsh-ollama ollama pull nomic-embed-text
+# 2) embedding：LM Studio 里加载 bge-m3（GUI 操作，见 install.md §3）
+#    也可以用任何 mem0 支持的 provider —— 本仓库只推荐并验证 LM Studio 这条路。
 
 # 3) 构建并安装插件
 node node_modules/typescript/bin/tsc -p tsconfig.build.json
@@ -141,7 +139,7 @@ dsh plugin --profile <profile> add /绝对路径/dsh-mem0-plugin
       name: dsh-mem0-plugin
       config:
         embedder:
-          provider: lmstudio          # 用 Ollama 就改成 ollama
+          provider: lmstudio
           config:
             baseURL: http://localhost:1234/v1
             model: text-embedding-bge-m3
@@ -166,7 +164,7 @@ dsh plugin --profile <profile> add /绝对路径/dsh-mem0-plugin
 
 **关于 `llm`**：不配也能用，只是记忆按**原文**存储，不做事实提炼；
 配了之后 `mem0_add` 默认开启抽取。任何 OpenAI 兼容端点都行
-（DeepSeek、LM Studio 的 chat 模型、Ollama……）。
+（DeepSeek、本地模型……）。
 
 ### ⚠️ LM Studio 会静默替换未知的 model id
 
@@ -176,7 +174,34 @@ dsh plugin --profile <profile> add /绝对路径/dsh-mem0-plugin
 
 后果：**embedding 模型名写错不会报错**，但向量空间可能不是你要的那个；一条索引里混进两种向量空间，
 检索会**静默**变差。所以：**换 embedding 模型必须重建索引**，并且把 `mem0_status` 报出的维度和预期对一遍。
-（Ollama 在未知模型上会直接报错。）
+（有些后端会在未知模型上直接报错。）
+
+### 本机 LM Studio 跑 `infer: true` 需要一层适配
+
+想让 mem0 从对话里**抽事实**（`infer: true`）时，mem0ai 会调 LLM。把 LLM 配成本机 LM Studio
+会连撞三件事（都是 2026-10-16 实测，不是猜）：
+
+| # | 现象 | 原因 |
+|---|---|---|
+| ① | `HTTP 400`：`'response_format.type' must be 'json_schema' or 'text'` | mem0ai 发的是 OpenAI 的 `response_format: {type: "json_object"}`；**LM Studio 不认这个值** |
+| ② | `TypeError: text.replace is not a function` | LM Studio 会带一个 **空的 `tool_calls: []`**，而 mem0ai 判断的是 `if (response.tool_calls)` —— **空数组在 JS 里是 truthy**，于是本该返回字符串的地方返回了对象 |
+| ③ | 抽取结果为空 `{"memory": []}` / `[{}]` | 本机常是**推理模型**（答案在 `reasoning_content`，`content` 为空）；而把它改写成 `json_schema` 会**反过来约束死模型**，让它交出空壳 |
+
+**配套的小适配层**在 [`tools/lmstudio-shim/`](./tools/lmstudio-shim/)：一个只做三件事的本地转发
+（`json_object` → `text`、`reasoning_content` → `content`、删掉空的 `tool_calls`），默认听 `127.0.0.1:1235`，
+透传到 LM Studio 的 1234。配置里 `llm.provider` 仍写 `lmstudio`，只把 `baseURL` 指向它 ——
+**不需要另装 `openai` 包，也不用 fork mem0ai**（换 provider、升级 SDK 都不受影响）。
+
+```yaml
+llm:
+  provider: lmstudio                      # 复用它自带的 OpenAI 兼容客户端
+  config:
+    baseURL: http://127.0.0.1:1235/v1     # ← 指向适配层，而不是 1234
+    model: qwen3.6-35b-a3b-uncensored-heretic-mlx
+```
+
+> 实测（适配层 + `qwen3.6-35b-a3b`）：一段自我介绍抽出 1–2 条事实；**同一段对话再存一遍、
+> 换个说法再存一遍，条数都不涨**（去重生效）；每次 3–15 s（本地推理，比云端慢）。
 
 ### 其它可选项
 
@@ -238,7 +263,7 @@ toolDescriptions:
 ```sh
 bash scripts/probe.sh          # 先看这台机器上有什么（只读，不改任何东西）
 pnpm install && pnpm build     # pnpm 12 见下
-export MEM0_TEST_EMBEDDER=lmstudio   # 不设则默认 ollama
+export MEM0_TEST_EMBEDDER=lmstudio   # 默认就是 lmstudio
 npm test
 ```
 
@@ -248,7 +273,7 @@ npm test
   假失败只会训练人忽略测试。
 - **`config-failfast` 里「vector store 不可达」那条需要活的 embedder**（preflight 先探 embedder，再探 store），
   没有 embedder 时会 SKIP 并说明原因。
-- **「embedding 模型不存在要报错」只在 Ollama 上断言** —— LM Studio 不拒绝未知 model id（见上）。
+- **「embedding 模型不存在要报错」只在会拒绝未知模型的后端上断言** —— LM Studio 不拒绝未知 model id（见上）。
 - **pnpm 12**：`onlyBuiltDependencies` 已改名 `allowBuilds`，且未登记的构建脚本会让 `pnpm install`
   **退出非 0**（`ERR_PNPM_IGNORED_BUILDS`）；本仓库用 `allowBuilds: {better-sqlite3: false}` 明确拒绝它。
 - 性能基线每跑一次写一份 `docs/evidence/benchmark-<日期>-<后端>.md`，同日后端不同**不会互相覆盖**。

@@ -1,0 +1,14 @@
+packages:
+  - .
+
+# mem0ai `require()`s better-sqlite3 at import time even when the configured
+# history store is `memory`. The plugin therefore never lets that native build
+# run: leaving it denied keeps installs offline-safe and reproducible.
+onlyBuiltDependencies: []
+
+autoInstallPeers: false
+
+storeDir: /Users/roky/ChufengFiles/Local/workspace/env/pnpm-store
+
+allowBuilds:
+  better-sqlite3: set this to true or false

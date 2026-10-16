@@ -1,0 +1,111 @@
+# dsh-mem0-plugin — bundle patch layer
+#
+# Applied when a profile lists `dsh-mem0-plugin` in `dsh.profile.bundles`.
+# The layer inserts one loader row; the plugin's own Config schema then decides
+# whether the row is allowed to start.
+#
+# The config below matches the deployment this plugin was developed against
+# (Elasticsearch 8 + Ollama `nomic-embed-text`).
+# Override any key from the profile's own `cordis.patch.yml` — patches replace a
+# row's whole `config` value, so restate every key you still want.
+- insert:
+    - id: mem0
+      name: dsh-mem0-plugin
+      config:
+        # ── Embedding model ────────────────────────────────────────────────
+        # Required. The plugin refuses to load without it.
+        embedder:
+          provider: ollama
+          config:
+            url: http://localhost:11434
+            model: nomic-embed-text:latest
+            # embeddingDims is detected by the startup probe when omitted.
+
+        # ── Vector store ───────────────────────────────────────────────────
+        # Required. `elasticsearch` is the ES8 path.
+        vectorStore:
+          provider: elasticsearch
+          config:
+            collectionName: mem0_vector_store
+            host: localhost
+            port: 9200
+            username: elastic
+            password: elastic
+            # mem0 defaults to HTTPS when this is unset; ES8 single-node is
+            # plain http, so it must be stated explicitly.
+            useSsl: false
+
+        # ── Fact-extraction LLM (optional) ─────────────────────────────────
+        # mem0 only needs an LLM for `mem0_add` with `infer: true`. Without
+        # this block the plugin still loads and `mem0_add` defaults to
+        # `infer: false` (verbatim storage). Uncomment to enable extraction:
+        #
+        # llm:
+        #   provider: openai
+        #   config:
+        #     baseURL: https://ark.cn-beijing.volces.com/api/v3
+        #     apiKey: ${ARK_API_KEY}
+        #     model: doubao-seed-2-0-lite-260215
+        #     max_tokens: 2000
+        #     temperature: 0.1
+
+        # ── Runtime behaviour ──────────────────────────────────────────────
+        # Memory history for `mem0_history`, stored in a local SQLite file.
+        # Default: <workspace>/mem0/history.db, where <workspace> is the single
+        # registered dsh workspace, or dsh's default one when several exist
+        # (resolved through `workspaceRegistry`; the desktop host's cwd is the
+        # profile directory, so cwd is not usable). Falls back to
+        # <DSH_HOME>/mem0/history.db when no workspace can be resolved.
+        # `mem0_status` reports the path actually in use and why.
+        history:
+          enabled: true
+          # dbPath: /absolute/path/history.db   # wins over the above
+
+        # Verify both backends before the runtime is declared ready.
+        preflight:
+          enabled: true
+          timeoutMs: 8000
+
+        # Refresh the Elasticsearch index after each write so a search issued
+        # right after an add/update/delete sees it. Disable to trade
+        # read-after-write consistency for fewer refreshes.
+        refreshAfterWrite: true
+
+        # The plugin always loads so that `mem0_status` can explain a broken
+        # installation. Set `strict: true` to fail the plugin load instead
+        # (the row lands in FAILED and no tool is registered).
+        startup:
+          strict: false
+
+        # ── What the model is told ─────────────────────────────────────────
+        # Tool descriptions only say what each tool does. This section tells the
+        # agent *when* to reach for memory, and is contributed to the system
+        # prompt. Set `enabled: false` to contribute nothing at all.
+        guidance:
+          enabled: true
+          # text: |            # replaces the built-in wording entirely
+          #   ## Memory policy
+          #   Always search memory before answering about earlier work.
+          # append: |          # adds to the built-in (or replaced) wording
+          #   House rule: never store customer names.
+          # order: 3150        # placement among prompt sections
+          #
+          # `scope: agent` registers one section per agent (through that agent's
+          # own prompt layer) instead of a single global one, and `presets`
+          # narrows it to specific agent presets. Note that `presets` is only
+          # valid together with `scope: agent` — a global section cannot be
+          # narrowed afterwards.
+          # scope: agent
+          # presets: [ptc, standard]
+
+        # Override any single tool's model-facing description. Each value
+        # replaces that tool's whole description. Valid keys: mem0_status,
+        # mem0_add, mem0_search, mem0_get, mem0_update, mem0_delete,
+        # mem0_get_all, mem0_history.
+        # toolDescriptions:
+        #   mem0_add: 'Save a durable fact or preference the user wants remembered.'
+
+        # Optional: defaults applied when a tool call omits identifiers, so a
+        # single-user deployment need not repeat `user_id` everywhere.
+        # identifiers:
+        #   user_id: default-user

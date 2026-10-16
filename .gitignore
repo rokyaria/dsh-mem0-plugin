@@ -1,0 +1,22 @@
+# Dependencies
+node_modules/
+
+# Local env / editor noise
+.DS_Store
+*.log
+.idea/
+.vscode/
+
+# Packed bundles (produced by `pnpm pack`)
+*.tgz
+
+# NOTE: `lib/` is deliberately NOT ignored.
+#
+# It is the compiled output, and it is committed on purpose: dsh installs a
+# plugin from git as *source*, and a build would require a `prepare` script that
+# the user must explicitly authorise — which means letting this package run code
+# on their machine at install time. Shipping the build output removes that
+# requirement entirely.
+#
+# Consequence for contributors: run `npm run build` and commit `lib/` together
+# with `src/`, or the published behaviour will not match the source.

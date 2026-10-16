@@ -1,0 +1,94 @@
+{
+  "name": "dsh-mem0-plugin",
+  "version": "0.3.0",
+  "type": "module",
+  "description": "mem0 long-term memory for DeepSeek Harness: in-process mem0ai OSS (no Python sidecar), Elasticsearch 8 vector store, pluggable embedding model. Tools: mem0_add / mem0_search / mem0_get / mem0_update / mem0_delete / mem0_get_all / mem0_history / mem0_status.",
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "cordis",
+    "cordis-plugin",
+    "mem0",
+    "memory",
+    "long-term-memory",
+    "agent-memory",
+    "elasticsearch",
+    "rag"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
+  },
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "files": [
+    "lib",
+    "src",
+    "docs",
+    "cordis.patch.yml",
+    "README.md",
+    "development.md",
+    "install.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node test/boot-policy.mjs && node test/bundle-config.mjs && node test/history-workspace.mjs && node test/guidance.mjs && node test/config-failfast.mjs && node test/scope-delete.mjs && node test/e2e.mjs",
+    "test:boot": "node test/boot-policy.mjs",
+    "test:bundle": "node test/bundle-config.mjs",
+    "test:failfast": "node test/config-failfast.mjs",
+    "test:e2e": "node test/e2e.mjs",
+    "test:bench": "node test/benchmark.mjs",
+    "test:scope-delete": "node test/scope-delete.mjs",
+    "test:history-path": "node test/history-workspace.mjs",
+    "test:guidance": "node test/guidance.mjs",
+    "verify": "npm run typecheck && npm run build && npm test"
+  },
+  "dependencies": {
+    "@deepseek-ai/schemastery": "~3.18.4",
+    "@elastic/elasticsearch": "^8.19.0",
+    "better-sqlite3": "^12.6.2",
+    "mem0ai": "^3.3.1",
+    "ollama": "^0.6.4"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "~4.0.4",
+    "@deepseek-ai/dsh-tools": "^0.2.0-rc.2"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "~4.0.4",
+    "@deepseek-ai/cordis-plugin-group": "~1.0.4",
+    "@deepseek-ai/cordis-plugin-include": "~1.0.9",
+    "@deepseek-ai/cordis-plugin-loader": "~1.0.5",
+    "@deepseek-ai/dsh-agent": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-app-boot": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-home-paths": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-invariants": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-launch-environment": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-llm": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-ptc-runtime": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-sandbox": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-sandbox-policy": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-scope": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-session": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-system-prompt": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-tools": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-user-approval": "0.2.0-rc.2",
+    "@types/node": "^22.20.0",
+    "typescript": "~5.7.2",
+    "yaml": "^2.9.1"
+  },
+  "author": "rokyaria"
+}

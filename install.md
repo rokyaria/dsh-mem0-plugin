@@ -214,17 +214,39 @@ print('YAML OK')
 > 而且**未登记的构建脚本会让 `pnpm install` 退出非 0**（`ERR_PNPM_IGNORED_BUILDS`，其实依赖已经装好）。
 > 本仓库用 `allowBuilds: {better-sqlite3: false}` 明确拒绝那一个原生模块（插件用 `node:sqlite`，不需要它）。
 
-> **桌面版 profile 的实测装法**（2026-10-16，公开 CLI 管不了 Desktop profile）：
+> **桌面版 profile 的实测装法**（2026-10-16 实测，公开 CLI 管不了 Desktop profile）：
 > ```sh
+> # ① 把插件放进工作区，并**声明成 profile 的依赖**（光建软链会被 pnpm 当成多余项清掉）
 > cp -R <克隆目录> <工作区>/env/dsh-plugins/dsh-mem0-plugin      # 去掉 .git
-> ln -sfn <工作区>/env/dsh-plugins/dsh-mem0-plugin ~/.dsh/profiles/desktop/node_modules/dsh-mem0-plugin
-> # 然后在 cordis.patch.yml 末尾加一行（改前先备份）：
-> # - id: mem0
-> #   name: dsh-mem0-plugin
-> #   config: { ... }
+> python3 - <<'PY'
+> import json, pathlib, os
+> p = pathlib.Path(os.path.expanduser('~/.dsh/profiles/desktop/package.json'))
+> d = json.loads(p.read_text())
+> d.setdefault('dependencies', {})['dsh-mem0-plugin'] = 'link:<工作区>/env/dsh-plugins/dsh-mem0-plugin'
+> p.write_text(json.dumps(d, indent=2) + chr(10))
+> PY
+> (cd ~/.dsh/profiles/desktop && pnpm install)   # link: 依赖装好后 node_modules 里就有链接
+> # ② 配置写进 cordis.patch.yml（形态见 §5，必须是 insert，改前先备份）
 > ```
-> **patch 层是启动时读的** —— 加完要重启应用（或在插件界面 reload），`mem0_*` 工具才会出现在会话里。
-> 验证顺序：重启 → 调 `mem0_status`（第一行 `OK`）→ 跑 `test/e2e.mjs`。
+> **patch 层是启动时读的** —— 加完重启应用（或让插件界面 reload），`mem0_*` 工具才会出现在会话里。
+> 验证顺序：重启 → 调 `mem0_status`（`ok: true`）→ 跑 `test/e2e.mjs`。
+>
+> ### ⚠️ 最容易踩的一个坑：`cordis.patch.yml` 里的**两种形态不是一回事**
+>
+> ```yaml
+> - id: mem0          # ← 这是「**改**一条已存在的条目」，条目不存在时报 warning 然后**静默跳过**
+>   config: {...}
+>
+> - insert:           # ← 这才是「**新增**一条条目」
+>     - id: mem0
+>       name: dsh-mem0-plugin
+>       config: {...}
+> ```
+>
+> 写错形态时 dsh 只会打印一行（`patch: entry "mem0" not found`）、**照常启动**，插件根本不会被挂载 ——
+> 现象就是「重启了但 `mem0_*` 工具没出现」。2026-10-16 我就是这么折腾了一轮的；
+> 本仓库早期文档也写错过，现在改对了。判断办法：`dsh --profile <name> --patch <file> --dump-config`
+> 看合成结果里有没有你的条目。
 
 ```sh
 # 源码目录（Agent 自己 clone / 构建的情况）

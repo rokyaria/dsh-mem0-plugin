@@ -2,13 +2,12 @@ packages:
   - .
 
 # mem0ai `require()`s better-sqlite3 at import time even when the configured
-# history store is `memory`. The plugin therefore never lets that native build
-# run: leaving it denied keeps installs offline-safe and reproducible.
+# history store is `memory`. This plugin never uses that code path — its history
+# store is node:sqlite — so the native build is deliberately not authorised.
+# Leaving it denied keeps installs compiler-free and reproducible.
 onlyBuiltDependencies: []
 
+# mem0ai declares ~25 optional vector-store/LLM clients as peers; installing all
+# of them would pull chromadb, mongodb, oracledb and friends into a plugin that
+# only ever needs one store.
 autoInstallPeers: false
-
-storeDir: /Users/roky/ChufengFiles/Local/workspace/env/pnpm-store
-
-allowBuilds:
-  better-sqlite3: set this to true or false

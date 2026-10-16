@@ -5,7 +5,14 @@ packages:
 # history store is `memory`. This plugin never uses that code path — its history
 # store is node:sqlite — so the native build is deliberately not authorised.
 # Leaving it denied keeps installs compiler-free and reproducible.
-onlyBuiltDependencies: []
+#
+# pnpm 12 replaced `onlyBuiltDependencies` with the `allowBuilds` map, and it
+# treats an unlisted build script as an *error* (ERR_PNPM_IGNORED_BUILDS) that
+# fails `pnpm install` even though the install itself succeeded. Naming the one
+# dependency we deny keeps the intent and lets install exit 0.
+# (Verified on pnpm 12.8.1, 2026-10-16: `false` → exit 0, a `!pkg` list → exit 1.)
+allowBuilds:
+  better-sqlite3: false
 
 # mem0ai declares ~25 optional vector-store/LLM clients as peers; installing all
 # of them would pull chromadb, mongodb, oracledb and friends into a plugin that
